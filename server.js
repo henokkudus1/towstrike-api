@@ -83,10 +83,8 @@ async function getTomTom() {
       console.log(box.name, 'exception:', e.message);
     }
   }
-  const SKIP_TYPES = ['Road Closure', 'Construction', 'Congestion'];
-  const filtered = allIncidents.filter(i => !SKIP_TYPES.includes(i.type));
-  console.log('TomTom TOTAL:', allIncidents.length, 'After filter:', filtered.length);
-  return filtered;
+  console.log('TomTom TOTAL incidents:', allIncidents.length);
+  return allIncidents;
 }
 
 async function getWaze() {
