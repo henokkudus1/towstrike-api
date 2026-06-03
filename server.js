@@ -83,8 +83,10 @@ async function getTomTom() {
       console.log(box.name, 'exception:', e.message);
     }
   }
-  console.log('TomTom TOTAL incidents:', allIncidents.length);
-  return allIncidents;
+  const USEFUL_TYPES = ['Accident', 'Disabled Vehicle', 'Hazard', 'Lane Closure', 'Weather Hazard'];
+  const filtered = allIncidents.filter(i => USEFUL_TYPES.includes(i.type));
+  console.log('TomTom TOTAL:', allIncidents.length, 'After filter:', filtered.length);
+  return filtered;
 }
 
 async function getWaze() {
