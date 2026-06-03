@@ -43,7 +43,7 @@ async function getTomTom() {
     const url = 'https://api.tomtom.com/traffic/services/5/incidentDetails' +
       '?key=' + TOMTOM_KEY +
       '&bbox=-85.20,41.50,-82.00,43.45' +
-      '&fields={incidents{type,geometry{type,coordinates},properties{id,iconCategory,startTime,from,to,roadNumbers,events{description}}}}' +
+      '&fields=%7Bincidents%7Btype%2Cgeometry%7Btype%2Ccoordinates%7D%2Cproperties%7Bid%2CiconCategory%2CstartTime%2Cfrom%2Cto%2CroadNumbers%2Cevents%7Bdescription%7D%7D%7D%7D' +
       '&language=en-US' +
       '&timeValidityFilter=present';
     const result = await httpsGet(url);
