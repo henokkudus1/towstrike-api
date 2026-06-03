@@ -83,8 +83,8 @@ async function getTomTom() {
       console.log(box.name, 'exception:', e.message);
     }
   }
-  const USEFUL_TYPES = ['Accident', 'Disabled Vehicle', 'Hazard', 'Lane Closure', 'Weather Hazard'];
-  const filtered = allIncidents.filter(i => USEFUL_TYPES.includes(i.type));
+  const SKIP_TYPES = ['Road Closure', 'Construction', 'Congestion'];
+  const filtered = allIncidents.filter(i => !SKIP_TYPES.includes(i.type));
   console.log('TomTom TOTAL:', allIncidents.length, 'After filter:', filtered.length);
   return filtered;
 }
