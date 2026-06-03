@@ -36,40 +36,55 @@ function httpsGet(url) {
 async function getTomTom() {
   if (!TOMTOM_KEY) { console.log('No key'); return []; }
   console.log('TomTom key:', TOMTOM_KEY.substring(0,8));
-  try {
-    const bbox = '-85.20,41.50,-82.00,43.45';
-    const fields = encodeURIComponent('{incidents{type,geometry{type,coordinates},properties{id,iconCategory,startTime,from,to,roadNumbers,events{description}}}}');
-    const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_KEY}&bbox=${bbox}&fields=${fields}&language=en-US&timeValidityFilter=present`;
-    console.log('URL:', url.substring(0, 120));
-    const result = await httpsGet(url);
-    console.log('TomTom status:', result.status);
-    if (result.status !== 200 || !result.data) {
-      console.log('TomTom error body:', JSON.stringify(result.data || '').substring(0,300));
-      return [];
+
+  const boxes = [
+    { name: 'Detroit/Ann Arbor/Ypsilanti', bbox: '-84.0,42.0,-82.8,42.8' },
+    { name: 'Pontiac/Flint', bbox: '-83.8,42.8,-82.8,43.4' },
+    { name: 'Lansing area', bbox: '-85.0,42.3,-84.0,43.0' }
+  ];
+  const fields = encodeURIComponent('{incidents{type,geometry{type,coordinates},properties{id,iconCategory,startTime,from,to,roadNumbers,events{description}}}}');
+  const types = {0:'Incident',1:'Accident',2:'Weather Hazard',3:'Hazard',4:'Weather Hazard',5:'Hazard',6:'Congestion',7:'Lane Closure',8:'Road Closure',9:'Construction',10:'Weather Hazard',11:'Hazard',14:'Disabled Vehicle'};
+
+  const allIncidents = [];
+  const seenIds = new Set();
+  for (const box of boxes) {
+    try {
+      const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_KEY}&bbox=${box.bbox}&fields=${fields}&language=en-US&timeValidityFilter=present`;
+      console.log('Fetching box:', box.name);
+      const result = await httpsGet(url);
+      console.log(box.name, 'status:', result.status);
+      if (result.status !== 200 || !result.data?.incidents) {
+        console.log(box.name, 'error:', JSON.stringify(result.data||'').substring(0,200));
+        continue;
+      }
+      const raw = result.data.incidents || [];
+      console.log(box.name, 'incidents:', raw.length);
+      raw.forEach((inc, i) => {
+        const p = inc.properties || {};
+        const id = 'tt-' + (p.id || box.name + i);
+        if (seenIds.has(id)) return;
+        seenIds.add(id);
+        const coords = inc.geometry?.coordinates || [];
+        let lat = 0, lon = 0;
+        if (inc.geometry?.type === 'Point') { lon = coords[0]; lat = coords[1]; }
+        else if (inc.geometry?.type === 'LineString' && coords.length) { lon = coords[0][0]; lat = coords[0][1]; }
+        if (lat === 0 || isNaN(lat)) return;
+        allIncidents.push({
+          id, source: 'TomTom',
+          type: types[p.iconCategory] || 'Incident',
+          description: (p.events||[]).map(e=>e.description).filter(Boolean).join('. '),
+          lat, lon,
+          location: [(p.roadNumbers||[]).join(', '),p.from,p.to].filter(Boolean).join(' to ')||'Michigan',
+          direction: '',
+          reported: p.startTime || new Date().toISOString()
+        });
+      });
+    } catch(e) {
+      console.log(box.name, 'exception:', e.message);
     }
-    const raw = result.data.incidents || [];
-    console.log('TomTom incidents:', raw.length);
-    const types = {0:'Incident',1:'Accident',2:'Weather Hazard',3:'Hazard',4:'Weather Hazard',5:'Hazard',6:'Congestion',7:'Lane Closure',8:'Road Closure',9:'Construction',10:'Weather Hazard',11:'Hazard',14:'Disabled Vehicle'};
-    return raw.map((inc,i) => {
-      const p = inc.properties || {};
-      const coords = inc.geometry?.coordinates || [];
-      let lat = 0, lon = 0;
-      if (inc.geometry?.type === 'Point') { lon = coords[0]; lat = coords[1]; }
-      else if (inc.geometry?.type === 'LineString' && coords.length) { lon = coords[0][0]; lat = coords[0][1]; }
-      return {
-        id: 'tt-'+(p.id||i), source:'TomTom',
-        type: types[p.iconCategory] || 'Incident',
-        description: (p.events||[]).map(e=>e.description).filter(Boolean).join('. '),
-        lat, lon,
-        location: [(p.roadNumbers||[]).join(', '),p.from,p.to].filter(Boolean).join(' to ')||'Michigan',
-        direction: '',
-        reported: p.startTime || new Date().toISOString()
-      };
-    }).filter(i => i.lat !== 0 && !isNaN(i.lat));
-  } catch(e) {
-    console.log('TomTom exception:', e.message);
-    return [];
   }
+  console.log('TomTom TOTAL incidents:', allIncidents.length);
+  return allIncidents;
 }
 
 async function getWaze() {
