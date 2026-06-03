@@ -35,51 +35,41 @@ function httpsGet(url) {
 }
 async function getTomTom() {
   if (!TOMTOM_KEY) { console.log('No key'); return []; }
-  console.log('Trying TomTom, key:', TOMTOM_KEY.substring(0,8));
-
-  const attempts = [
-    'https://api.tomtom.com/traffic/services/5/incidentDetails?key=' + TOMTOM_KEY + '&bbox=-85.20,41.50,-82.00,43.45&timeValidityFilter=present',
-    'https://api.tomtom.com/traffic/services/4/incidentDetails/s3/json?key=' + TOMTOM_KEY + '&projection=EPSG4326&expandCluster=true&originalPosition=true&bbox=-85.20,41.50,-82.00,43.45',
-    'https://api.tomtom.com/traffic/services/5/incidentDetails?key=' + TOMTOM_KEY + '&bbox=-85.20,41.50,-82.00,43.45'
-  ];
-  for (let i = 0; i < attempts.length; i++) {
-    try {
-      console.log('Attempt', i+1, ':', attempts[i].substring(0,90));
-      const result = await httpsGet(attempts[i]);
-      console.log('Status:', result.status);
-      if (result.status === 200 && result.data) {
-        const incidents = result.data.incidents || result.data.tm?.poi || [];
-        console.log('SUCCESS! Incidents:', incidents.length);
-        if (incidents.length > 0) {
-          return incidents.map((inc, idx) => {
-            const p = inc.properties || inc.f || {};
-            const coords = inc.geometry?.coordinates || [];
-            let lat = inc.lat || inc.p?.y || 0;
-            let lon = inc.lon || inc.p?.x || 0;
-            if (inc.geometry?.type === 'Point') { lon = coords[0]; lat = coords[1]; }
-            else if (inc.geometry?.type === 'LineString' && coords.length) { lon = coords[0][0]; lat = coords[0][1]; }
-            const types = {0:'Incident',1:'Accident',2:'Weather Hazard',3:'Hazard',4:'Weather Hazard',5:'Hazard',6:'Congestion',7:'Lane Closure',8:'Road Closure',9:'Construction',10:'Weather Hazard',11:'Hazard',14:'Disabled Vehicle'};
-            return {
-              id: 'tt-' + idx,
-              source: 'TomTom',
-              type: types[p.iconCategory || inc.ic] || inc.ty || 'Incident',
-              description: (p.events||[]).map(e=>e.description).filter(Boolean).join('. ') || inc.d || '',
-              lat: lat, lon: lon,
-              location: [(p.roadNumbers||[]).join(', '), p.from||inc.f, p.to||inc.t].filter(Boolean).join(' to ') || 'Michigan',
-              direction: '',
-              reported: p.startTime || inc.sd || new Date().toISOString()
-            };
-          }).filter(i => i.lat !== 0 && i.lon !== 0 && !isNaN(i.lat));
-        }
-      } else {
-        console.log('Failed status', result.status, '- trying next');
-      }
-    } catch(e) {
-      console.log('Attempt', i+1, 'error:', e.message);
+  console.log('TomTom key:', TOMTOM_KEY.substring(0,8));
+  try {
+    const bbox = '-85.20,41.50,-82.00,43.45';
+    const fields = encodeURIComponent('{incidents{type,geometry{type,coordinates},properties{id,iconCategory,startTime,from,to,roadNumbers,events{description}}}}');
+    const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_KEY}&bbox=${bbox}&fields=${fields}&language=en-US&timeValidityFilter=present`;
+    console.log('URL:', url.substring(0, 120));
+    const result = await httpsGet(url);
+    console.log('TomTom status:', result.status);
+    if (result.status !== 200 || !result.data) {
+      console.log('TomTom error body:', JSON.stringify(result.data || '').substring(0,300));
+      return [];
     }
+    const raw = result.data.incidents || [];
+    console.log('TomTom incidents:', raw.length);
+    const types = {0:'Incident',1:'Accident',2:'Weather Hazard',3:'Hazard',4:'Weather Hazard',5:'Hazard',6:'Congestion',7:'Lane Closure',8:'Road Closure',9:'Construction',10:'Weather Hazard',11:'Hazard',14:'Disabled Vehicle'};
+    return raw.map((inc,i) => {
+      const p = inc.properties || {};
+      const coords = inc.geometry?.coordinates || [];
+      let lat = 0, lon = 0;
+      if (inc.geometry?.type === 'Point') { lon = coords[0]; lat = coords[1]; }
+      else if (inc.geometry?.type === 'LineString' && coords.length) { lon = coords[0][0]; lat = coords[0][1]; }
+      return {
+        id: 'tt-'+(p.id||i), source:'TomTom',
+        type: types[p.iconCategory] || 'Incident',
+        description: (p.events||[]).map(e=>e.description).filter(Boolean).join('. '),
+        lat, lon,
+        location: [(p.roadNumbers||[]).join(', '),p.from,p.to].filter(Boolean).join(' to ')||'Michigan',
+        direction: '',
+        reported: p.startTime || new Date().toISOString()
+      };
+    }).filter(i => i.lat !== 0 && !isNaN(i.lat));
+  } catch(e) {
+    console.log('TomTom exception:', e.message);
+    return [];
   }
-  console.log('All TomTom attempts failed');
-  return [];
 }
 
 async function getWaze() {
