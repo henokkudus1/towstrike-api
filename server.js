@@ -1,6 +1,12 @@
 const https = require('https');
 const http = require('http');
 const PORT = process.env.PORT || 3001;
+
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type'
+};
 const TOMTOM_KEY = process.env.TOMTOM_API_KEY || '';
 function httpsGet(url) {
   return new Promise((resolve, reject) => {
@@ -116,6 +122,11 @@ async function getWaze() {
   }
 }
 const server = http.createServer(async (req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, CORS_HEADERS);
+    res.end();
+    return;
+  }
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Content-Type', 'application/json');
@@ -142,7 +153,7 @@ const server = http.createServer(async (req, res) => {
   const waze = wazeResult.status === 'fulfilled' ? wazeResult.value : [];
   const incidents = [...tomtom, ...waze];
   console.log('RESPONSE - TomTom:', tomtom.length, 'Waze:', waze.length, 'Total:', incidents.length);
-  res.writeHead(200);
+  res.writeHead(200, {...CORS_HEADERS, 'Content-Type': 'application/json'})
   res.end(JSON.stringify({
     incidents: incidents,
     sources: {
