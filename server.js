@@ -3,7 +3,6 @@ const https = require('https');
 const http = require('http');
 
 const PORT = process.env.PORT || 3000;
-
 const TOMTOM_KEY = process.env.TOMTOM_API_KEY || '';
 
 const CORS_HEADERS = {'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, OPTIONS','Access-Control-Allow-Headers':'Content-Type'};
@@ -120,7 +119,7 @@ const server=http.createServer(async(req,res)=>{
 
     const lon=parseFloat(url.searchParams.get('lon'))||-83.6130;
 
-    const radius=parseInt(url.searchParams.get('radius'))||150;
+    const radius=parseInt(url.searchParams.get('radius'))||50;
 
     const incidents=await getTomTom(lat,lon,radius);
 
