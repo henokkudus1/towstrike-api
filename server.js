@@ -16,7 +16,15 @@ const KEY  = process.env.TOMTOM_KEY || '';
      APNS_TEAM_ID    = 3F6UVAJ38B
      APNS_BUNDLE_ID  = com.homerununit.towstrike   (optional, this is the default)
    Until these are set, the push engine stays OFF and the rest of the API runs normally. */
-const APNS_KEY     = (process.env.APNS_KEY || '').replace(/\\n/g, '\n');
+/* APNs auth key (.p8). Prefer APNS_KEY_B64 — a single-line base64 of the whole .p8 file —
+   because pasting the multi-line PEM into a host's env UI often strips the newlines, which
+   makes crypto.sign fail with "DECODER routines::unsupported". Base64 has no newlines to lose.
+   Falls back to raw APNS_KEY (with literal "\n" restored) for backward compatibility. */
+const APNS_KEY = (function () {
+  const b64 = (process.env.APNS_KEY_B64 || '').trim();
+  if (b64) { try { return Buffer.from(b64, 'base64').toString('utf8'); } catch (_) {} }
+  return (process.env.APNS_KEY || '').replace(/\\n/g, '\n');
+})();
 const APNS_KEY_ID  = process.env.APNS_KEY_ID  || '';
 const APNS_TEAM_ID = process.env.APNS_TEAM_ID || '';
 const APNS_BUNDLE  = process.env.APNS_BUNDLE_ID || 'com.homerununit.towstrike';
