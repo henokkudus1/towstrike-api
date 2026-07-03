@@ -20,7 +20,22 @@ const APNS_KEY     = (process.env.APNS_KEY || '').replace(/\\n/g, '\n');
 const APNS_KEY_ID  = process.env.APNS_KEY_ID  || '';
 const APNS_TEAM_ID = process.env.APNS_TEAM_ID || '';
 const APNS_BUNDLE  = process.env.APNS_BUNDLE_ID || 'com.homerununit.towstrike';
-const APNS_HOST    = process.env.APNS_HOST || 'https://api.push.apple.com'; // sandbox: https://api.sandbox.push.apple.com
+
+/* APNs hosts — which one Apple honors depends on how the APP was SIGNED, not the server:
+     SANDBOX    (api.sandbox.push.apple.com) → DEVELOPMENT builds: Xcode "Run"/debug installs
+                                               to a device. Entitlement aps-environment=development.
+                                               ← your current builds mint SANDBOX tokens.
+     PRODUCTION (api.push.apple.com)         → TestFlight and App Store builds.
+                                               Entitlement aps-environment=production.
+   A token minted for one environment is rejected by the OTHER host with 400 BadDeviceToken.
+   Strategy: try APNS_PRIMARY first, then auto-retry the OTHER host once on BadDeviceToken — so the
+   SAME server works for dev tokens now AND shipped (TestFlight/App Store) tokens later, no redeploy.
+   Default primary = sandbox to match today's dev builds. Set APNS_HOST env to pin production first
+   (e.g. after you ship) — the fallback still covers the other environment either way. */
+const APNS_HOST_PROD    = 'https://api.push.apple.com';
+const APNS_HOST_SANDBOX = 'https://api.sandbox.push.apple.com';
+const APNS_PRIMARY = process.env.APNS_HOST || APNS_HOST_SANDBOX;
+const APNS_ALT     = (APNS_PRIMARY === APNS_HOST_PROD) ? APNS_HOST_SANDBOX : APNS_HOST_PROD;
 
 app.use(cors());
 app.use(express.json());
@@ -129,29 +144,20 @@ function apnsJWT() {
 
 function apnsConfigured() { return !!(APNS_KEY && APNS_KEY_ID && APNS_TEAM_ID); }
 
-/** Send one push to one device token. Resolves {status, ...} and never throws. */
-function sendPush(token, title, body, extra) {
+function hostLabel(host) { return host.indexOf('sandbox') >= 0 ? 'sandbox' : 'production'; }
+
+/** Low-level: POST an already-built payload to ONE host.
+ *  Resolves {status, reason, data, host}; never throws. `reason` is Apple's exact
+ *  error string parsed from the JSON body (BadDeviceToken, TopicDisallowed, ...). */
+function apnsSendOnce(host, token, jwt, payload) {
   return new Promise(resolve => {
-    if (!apnsConfigured()) return resolve({ status: 0, reason: 'not-configured' });
-    let jwt;
-    try { jwt = apnsJWT(); }
-    catch (e) { return resolve({ status: 0, reason: 'jwt-error:' + e.message }); }
-
-    const payload = JSON.stringify(Object.assign({
-      aps: {
-        alert: { title: title, body: body || '' },
-        sound: 'towstrike_alert.wav',
-        'interruption-level': 'time-sensitive'
-      }
-    }, extra || {}));
-
     let client;
-    try { client = http2.connect(APNS_HOST); }
-    catch (e) { return resolve({ status: 0, reason: 'connect-error' }); }
+    try { client = http2.connect(host); }
+    catch (e) { return resolve({ status: 0, reason: 'connect-error', data: '', host: host }); }
 
     let done = false;
-    const finish = (r) => { if (done) return; done = true; try { client.close(); } catch (_) {} resolve(r); };
-    client.on('error', () => finish({ status: 0, reason: 'client-error' }));
+    const finish = (r) => { if (done) return; done = true; try { client.close(); } catch (_) {} resolve(Object.assign({ host: host }, r)); };
+    client.on('error', () => finish({ status: 0, reason: 'client-error', data: '' }));
 
     const req = client.request({
       ':method': 'POST',
@@ -165,11 +171,46 @@ function sendPush(token, title, body, extra) {
     req.on('response', h => { status = h[':status']; });
     req.setEncoding('utf8');
     req.on('data', d => data += d);
-    req.on('end', () => finish({ status: status, data: data }));
-    req.on('error', () => finish({ status: 0, reason: 'req-error' }));
-    req.setTimeout(8000, () => { try { req.close(); } catch (_) {} finish({ status: 0, reason: 'timeout' }); });
+    req.on('end', () => {
+      let reason = '';
+      try { if (data) reason = (JSON.parse(data).reason || ''); } catch (_) {}
+      finish({ status: status, reason: reason, data: data });
+    });
+    req.on('error', () => finish({ status: 0, reason: 'req-error', data: '' }));
+    req.setTimeout(8000, () => { try { req.close(); } catch (_) {} finish({ status: 0, reason: 'timeout', data: '' }); });
     req.end(payload);
   });
+}
+
+/** Send one push to one device token, with automatic host fallback on env mismatch.
+ *  Tries APNS_PRIMARY, then retries APNS_ALT once if Apple says 400 BadDeviceToken
+ *  (dev token vs prod host, or vice-versa). Logs Apple's exact status + reason for
+ *  EVERY attempt. Resolves {status, reason, data, host}; never throws. */
+async function sendPush(token, title, body, extra) {
+  if (!apnsConfigured()) { console.log('[APNs] skip — engine not configured'); return { status: 0, reason: 'not-configured' }; }
+  let jwt;
+  try { jwt = apnsJWT(); }
+  catch (e) { console.log('[APNs] jwt-error ' + e.message); return { status: 0, reason: 'jwt-error:' + e.message }; }
+
+  const payload = JSON.stringify(Object.assign({
+    aps: {
+      alert: { title: title, body: body || '' },
+      sound: 'towstrike_alert.wav',
+      'interruption-level': 'time-sensitive'
+    }
+  }, extra || {}));
+
+  const tok = String(token).slice(0, 12);
+
+  let r = await apnsSendOnce(APNS_PRIMARY, token, jwt, payload);
+  console.log('[APNs] host=' + hostLabel(r.host) + ' token=' + tok + '… status=' + r.status + ' reason=' + (r.reason || '-'));
+
+  // Environment mismatch → Apple returns 400 BadDeviceToken. Retry the OTHER host once.
+  if (r.status === 400 && r.reason === 'BadDeviceToken') {
+    r = await apnsSendOnce(APNS_ALT, token, jwt, payload);
+    console.log('[APNs] retry host=' + hostLabel(r.host) + ' token=' + tok + '… status=' + r.status + ' reason=' + (r.reason || '-') + (r.status === 200 ? '  ✓ delivered on fallback host' : ''));
+  }
+  return r;
 }
 
 /* ---- device registry (in-memory; self-heals because the app re-registers on every open) ---- */
